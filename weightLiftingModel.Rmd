@@ -1,0 +1,122 @@
+---
+title: "An approach to predict Human Activity Recognition"
+author: "Tobias Springer"
+date: "25. September 2015"
+output:
+  html_document: default
+keep_md: yes
+---
+
+```{r, echo = FALSE, results='hide'}
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
+```
+
+### Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the [website](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of this report is to predict the manner in which the subjects did the exercise. This is the *classe* variable in the training set. We will report on how the model was built and end with a prediction on 20 different test cases. 
+
+### Remark on model creation
+During the process of building a predictive model, we will apply cross-validation by splitting the offered training data further into a *local* training and a *local* test data set. This is feasible due to the large size of the given training data. After learning a model on the *local* training data and testing its performance on the *local* test data, we will apply the model on the given test data.
+
+Furthermore, due to the larger number of data, we can expect the *out-of-sample error* to be somewhat close to the *in-sample error*, at least our model should strive for that to happen. The out-of-sample error is shown as the accuracy when applying the *confusionMatrix* command in *R*, which we will use for verifying the model accuracy.
+
+
+### Remark on the classifier variable
+According to [Veloso et al.](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf), "participants were asked to perform one set of 10 repetitions
+of the Unilateral Dumbbell Biceps Curl in five different fashions:
+exactly according to the specification **(Class A)**, throwing
+the elbows to the front **(Class B)**, lifting the dumbbell
+only halfway **(Class C)**, lowering the dumbbell only halfway
+**(Class D)** and throwing the hips to the front **(Class E)**. Class
+A corresponds to the specified execution of the exercise,
+while the other 4 classes correspond to common mistakes."
+
+
+### Data Processing
+The data required for this analysis is divided into two sets, one [training data set](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv), and the [testing data set](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv).
+
+First of all, we import (if that has not happened thus far) the data from the [website](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) into the working directory and do some quick cleaning by replacing all missing values with *NA*'s:
+```{r, cache = TRUE}
+# Download training data if not happened
+if (!file.exists("training.csv")){
+   fileURL1<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+   download.file(fileURL1,destfile="training.csv",method="curl")
+}
+trainData<-read.csv("training.csv",sep=",",header=TRUE, na.strings=c("NA", ""))
+if (!file.exists("testing.csv")){
+   fileURL1<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+   download.file(fileURL1,destfile="testing.csv",method="curl")
+}
+testData<-read.csv("testing.csv",sep=",",header=TRUE, na.strings=c("NA", ""))
+```
+```{r, echo=FALSE}
+library(caret)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(rattle)
+```
+Moreover, by applying 
+```{r, echo=TRUE}
+omitColumns <- function(T) {
+  subset(T[,colSums(is.na(T)) == 0], 
+         select = -c(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2,
+                     cvtd_timestamp, new_window, num_window))
+  }
+trainData <- omitColumns(trainData)
+testData <- omitColumns(testData)
+```
+we omit all columns that do not contain any values as well as unnecessary info variables, leaving us with
+```{r, echo=TRUE}
+names(trainData)
+```
+as variables.
+This leads to a large training data set having `r length(trainData[,1])` observations stored in rows and  `r length(names(trainData))` variables, the most interesting for us being the *classe* variable.
+In comparison, the test data contains only contains `r length(testData[,1])` cases -- as mentioned above.
+
+Hence, we have sufficient data to partition the *global* training set further into two subsets, one *local* training set for building the model and a *local* test set for evaluation of the model before using it as a predictor for the *global* test set:
+```{r, echo=TRUE}
+set.seed(4711)
+furtherSamples <- createDataPartition(y=trainData$classe, p=0.6, list=FALSE)
+localTrain <- trainData[furtherSamples,]
+localTest <- trainData[-furtherSamples,]
+```
+where *localTrain* consists of `r length(localTrain[,1])` cases and *localTest* of `r length(localTest[,1])`.
+
+```{r, echo=TRUE}
+plot(localTrain$classe, col="red", main="Classe Distribution in training data", xlab="", ylab="Frequency")
+```
+
+As can be seen from the figure, the data contains an increased number of *correct* executions of the given physical exercise compared to the four *wrong* ones.
+
+### Prediction model
+
+First and simplest approach is to apply a decision tree in order to predict values in future.
+```{r, echo=TRUE}
+decTreeModel <- rpart(classe ~ ., data = localTrain, method="class")
+```
+Now, let us take a look at the emerging tree
+```{r, echo=TRUE}
+fancyRpartPlot(decTreeModel)
+```
+and evaluate the approach after predicting the values in the *local* test data:
+```{r, echo=TRUE}
+predictDecTree <- predict(decTreeModel, localTest, type = "class")
+confusionMatrix(predictDecTree, localTest$classe)
+```
+Well, the accuracy in this case is rather poor! Hence, we take a second approach by applying random forests:
+```{r, echo=TRUE}
+randForestModel <- randomForest(classe ~. , data=localTrain, method="class")
+predictRandForest <- predict(randForestModel, localTest, type = "class")
+confusionMatrix(predictRandForest, localTest$classe)
+```
+Due to the fact that this model indicates high accuracy, we can conclude that it will very likely perform well on the 20 remaining test subjects.
+
+
+### Session Info
+The computation has been performed on the following system:
+```{r, echo=FALSE}
+sessionInfo()
+```
